@@ -1,6 +1,6 @@
 """Region geometry and binary coverage masks, independent of the UI."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import math
 import uuid
 import numpy as np
@@ -19,6 +19,9 @@ class Region:
     uid: str = ""
     # Closed outer contours in normalized box coordinates; None is a plain rectangle.
     contours: list | None = None
+    # Closed polygons in image coordinates, carved out after the margin is applied.
+    # They stay fixed to the image, so an occluding hand remains excluded when the contour changes.
+    excludes: list | None = None
 
     def __post_init__(self):
         if not self.uid:
@@ -71,16 +74,24 @@ def region_mask(region, size, margin=0):
         if radius:
             distance = cv2.distanceTransform(255 - mask, cv2.DIST_L2, cv2.DIST_MASK_PRECISE)
             mask = (distance <= radius).astype(np.uint8) * 255
+    for ring in region.excludes or []:
+        points = np.rint(np.asarray(ring) - [x0, y0]).astype(np.int32)
+        cv2.fillPoly(mask, [points], 0)
     return mask, (x0, y0)
 
 
 def region_contains(region, x, y):
     if not (region.x <= x <= region.x + region.w and region.y <= y <= region.y + region.h):
         return False
-    if not region.contours:
-        return True
     import cv2
 
+    if any(
+        cv2.pointPolygonTest(np.asarray(ring, dtype=np.float32), (float(x), float(y)), False) >= 0
+        for ring in region.excludes or []
+    ):
+        return False
+    if not region.contours:
+        return True
     return any(
         cv2.pointPolygonTest(np.asarray(ring, dtype=np.float32), (float(x), float(y)), False) >= 0
         for ring in region.points()
@@ -89,6 +100,8 @@ def region_contains(region, x, y):
 
 def region_covers(existing, candidate):
     """A contour's empty corners must not suppress a new detection on repeat runs."""
+    # Excluded parts were removed on purpose; a repeat detection there is already handled.
+    existing = replace(existing, excludes=None)
     a, (ax, ay) = region_mask(
         candidate,
         (

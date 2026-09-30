@@ -122,6 +122,38 @@ class GuiTests(unittest.TestCase):
         w.load_work(project)
         self.assertEqual((w.block.value(), w.margin.value(), len(w.regions)), (24, 25, 1))
 
+    def test_overwrite_replaces_source_after_confirmation_and_clears_regions(self):
+        w = self.window
+        self.add_region()
+        before = fingerprint(self.source)
+        with patch.object(w, "confirm_overwrite", return_value=False):
+            w.overwrite_current()
+        self.assertEqual(fingerprint(self.source), before)
+        self.assertEqual(len(w.regions), 1)
+        with patch.object(w, "confirm_overwrite", return_value=True):
+            w.overwrite_current()
+        self.assertNotEqual(fingerprint(self.source), before)
+        with Image.open(self.source) as saved:
+            self.assertEqual(saved.tobytes(), w.image.tobytes())
+        self.assertEqual(w.regions, [])
+        self.assertFalse(w.dirty)
+        self.assertFalse(w.overwrite_action.isEnabled())
+        document = w.current_document()
+        self.assertEqual(document.digest, fingerprint(self.source))
+        self.assertTrue(document.reviewed)
+        self.assertFalse(list(Path(self.folder.name).glob(".mosaic-*")))
+
+    def test_overwrite_refuses_a_source_changed_after_loading(self):
+        w = self.window
+        self.add_region()
+        Image.new("RGB", (800, 600), "red").save(self.source)
+        changed = fingerprint(self.source)
+        with patch.object(w, "confirm_overwrite", return_value=True), patch.object(w, "error") as error:
+            w.overwrite_current()
+        error.assert_called_once()
+        self.assertEqual(fingerprint(self.source), changed)
+        self.assertEqual(len(w.regions), 1)
+
     def test_zero_detection_is_not_a_clearance_and_manual_regions_survive(self):
         w = self.window
         self.add_region()
@@ -172,6 +204,8 @@ class GuiTests(unittest.TestCase):
     def test_coarseness_and_settings_retain_values(self):
         w = self.window
         self.add_region()
+        w.block.setValue(1)
+        self.assertEqual(w.block.value(), 1)
         w.block.setValue(400)
         self.assertEqual(w.block.value(), 400)
         w.margin.setValue(25)
@@ -275,6 +309,28 @@ class GuiTests(unittest.TestCase):
         self.assertEqual(len(w.regions[0].contours[0]), 3)
         w.undo()
         self.assertEqual(w.regions, before)
+
+    def test_exclude_lasso_carves_region_and_undo_restores_it(self):
+        w = self.window
+        w.start_lasso()
+        self.lasso([(100, 100), (300, 100), (300, 300), (100, 300)])
+        uid = w.regions[0].uid
+        before = w.snapshot()
+        w.start_exclude()
+        self.lasso([(250, 150), (380, 150), (380, 380), (250, 380)])
+        self.assertEqual(w.canvas.mode, "select")
+        self.assertEqual(len(w.regions), 1)
+        self.assertEqual(w.regions[0].uid, uid)
+        self.assertEqual(len(w.regions[0].excludes), 1)
+        self.assertEqual(w.regions[0].contours, before[0].contours)
+        self.assertTrue(w.clear_excludes_action.isEnabled())
+        w.undo()
+        self.assertEqual(w.regions, before)
+        w.canvas.select(uid)
+        w.start_exclude()
+        self.lasso([(250, 150), (380, 150), (380, 380), (250, 380)])
+        w.clear_excludes()
+        self.assertIsNone(w.regions[0].excludes)
 
     def test_manual_box_is_refined_once_and_undo_removes_whole_action(self):
         def shape(image, region):

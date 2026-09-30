@@ -10,9 +10,11 @@ from PIL import Image, ImageCms, ImageOps
 from .regions import region_mask
 
 MAX_PIXELS = 50_000_000
+MIN_BLOCK, MAX_BLOCK = 1, 1000
+DEFAULT_BLOCK, DEFAULT_MARGIN = 16, 10
 
 
-def minimum_block(size):
+def default_block(size):
     return max(4, math.ceil(max(size) / 100))
 
 
@@ -24,16 +26,30 @@ def fingerprint(path):
     return h.hexdigest()
 
 
+def _check_png(path, file):
+    if Path(path).suffix.lower() != ".png":
+        raise ValueError("PNGファイルを選んでください。")
+    if file.format != "PNG":
+        raise ValueError("PNG形式の画像を選んでください。")
+    if getattr(file, "n_frames", 1) != 1:
+        raise ValueError("アニメーションには未対応です。静止画を書き出して開いてください。")
+    if file.width * file.height > MAX_PIXELS:
+        raise ValueError("画像は5,000万画素以下にしてください。")
+
+
+def check_image(path):
+    """Validate a PNG from its header only, without decoding pixels."""
+    if Path(path).suffix.lower() != ".png":
+        raise ValueError("PNGファイルを選んでください。")
+    with Image.open(path) as file:
+        _check_png(path, file)
+
+
 def load_image(path):
     if Path(path).suffix.lower() != ".png":
         raise ValueError("PNGファイルを選んでください。")
     with Image.open(path) as file:
-        if file.format != "PNG":
-            raise ValueError("PNG形式の画像を選んでください。")
-        if getattr(file, "n_frames", 1) != 1:
-            raise ValueError("アニメーションには未対応です。静止画を書き出して開いてください。")
-        if file.width * file.height > MAX_PIXELS:
-            raise ValueError("画像は5,000万画素以下にしてください。")
+        _check_png(path, file)
         image = ImageOps.exif_transpose(file)
         profile = file.info.get("icc_profile")
         alpha = image.convert("RGBA").getchannel("A")
@@ -58,8 +74,8 @@ def load_image(path):
 def render(image, regions, block, margin):
     """Use a single global grid, so overlapping regions cannot weaken each other."""
     block = int(block)
-    if block < minimum_block(image.size):
-        raise ValueError("ブロックサイズが画像サイズに対する初期目安を下回っています。")
+    if not MIN_BLOCK <= block <= MAX_BLOCK:
+        raise ValueError("ブロックサイズが範囲外です。")
     result = image.copy()
     if not regions:
         return result
@@ -87,10 +103,22 @@ def render(image, regions, block, margin):
 def atomic_export(image, target, source):
     target, source = Path(target).resolve(), Path(source).resolve()
     if target == source or (target.exists() and os.path.samefile(target, source)):
-        raise ValueError("元画像は上書きできません。別のファイル名を指定してください。")
-    suffix = target.suffix.lower()
-    if suffix not in {".png", ".jpg", ".jpeg"}:
+        raise ValueError("元画像に上書きするときは「…」の「元画像に上書き保存」を使ってください。")
+    if target.suffix.lower() not in {".png", ".jpg", ".jpeg"}:
         raise ValueError("保存形式は .png または .jpg を指定してください。")
+    _write_atomic(image, target)
+
+
+def overwrite_source(image, source):
+    """Replace the source PNG in place; a failed write leaves the original file untouched."""
+    source = Path(source).resolve()
+    if source.suffix.lower() != ".png":
+        raise ValueError("PNGファイルだけを上書きできます。")
+    _write_atomic(image, source)
+
+
+def _write_atomic(image, target):
+    suffix = target.suffix.lower()
     clean = Image.frombytes("RGB", image.size, image.convert("RGB").tobytes())
     fd, name = tempfile.mkstemp(prefix=".mosaic-", suffix=suffix, dir=target.parent)
     os.close(fd)

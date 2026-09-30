@@ -11,8 +11,8 @@ models/
 preferences.ini
 *.mosaic.json
 *.batch.json
-*_mosaic*.png
-*_mosaic*.jpg
+*_censored*.png
+*_censored*.jpg
 .env
 .env.*
 !.env.example

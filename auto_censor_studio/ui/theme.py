@@ -74,6 +74,10 @@ QWidget { font-family: 'Yu Gothic UI', 'Segoe UI'; font-size: 14px; }
 QLabel { background: transparent; }
 QLabel#secondaryText { font-size: 12px; }
 QSpinBox, QDoubleSpinBox { min-height: 24px; border: 2px solid transparent; border-radius: 12px; padding: 6px 8px; }
+QSpinBox::up-button, QSpinBox::down-button { subcontrol-origin: border; width: 18px; border: none; border-radius: 6px; background: transparent; }
+QSpinBox::up-button { subcontrol-position: top right; margin: 4px 4px 0 0; }
+QSpinBox::down-button { subcontrol-position: bottom right; margin: 0 4px 4px 0; }
+QSpinBox::up-arrow, QSpinBox::down-arrow { image: none; width: 12px; height: 12px; }
 QMenu { padding: 8px; border-radius: 16px; }
 QMenu::item { padding: 10px 20px; border-radius: 10px; }
 QMenu::indicator { width: 18px; height: 18px; }
@@ -99,6 +103,9 @@ def theme_style(dark):
     arrow = (
         Path(__file__).resolve().parents[1] / "assets" / ("expand-dark.svg" if dark else "expand-light.svg")
     ).as_posix()
+    up = (
+        Path(__file__).resolve().parents[1] / "assets" / ("collapse-dark.svg" if dark else "collapse-light.svg")
+    ).as_posix()
     return (
         BASE_STYLE
         + f"""
@@ -114,6 +121,9 @@ QComboBox::drop-down {{ border: none; width: 20px; }}
 QComboBox::down-arrow {{ image: url({arrow}); width: 14px; height: 14px; }}
 QComboBox QAbstractItemView {{ background: {c["surface_container"]}; color: {c["on_surface"]}; selection-background-color: {c["primary_container"]}; selection-color: {c["on_primary_container"]}; padding: 6px; }}
 QSpinBox:focus, QDoubleSpinBox:focus {{ border-color: {c["primary"]}; }}
+QSpinBox[hovered="true"]::up-arrow {{ image: url({up}); }}
+QSpinBox[hovered="true"]::down-arrow {{ image: url({arrow}); }}
+QSpinBox::up-button:hover, QSpinBox::down-button:hover {{ background: {c["primary_container"]}; }}
 QSpinBox:disabled, QDoubleSpinBox:disabled {{ color: {c["disabled"]}; background: {c["surface_high"]}; }}
 QPushButton {{ background: {c["secondary_container"]}; }}
 QPushButton:hover, QPushButton:checked {{ background: {c["primary_container"]}; color: {c["on_primary_container"]}; }}

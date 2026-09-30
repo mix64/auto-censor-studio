@@ -4,7 +4,7 @@ import copy
 import os
 from pathlib import Path
 from PySide6.QtCore import QThread, Signal
-from ..core.images import fingerprint, load_image, render, atomic_export
+from ..core.images import fingerprint, load_image, render, atomic_export, overwrite_source
 from .detection import Detector
 from .segmentation import Segmenter
 
@@ -83,11 +83,13 @@ class BatchWorker(QThread):
 
 
 class ExportWorker(QThread):
-    result = Signal(str, str, str)
+    """Writes reviewed images into ``folder``, or over their sources when ``folder`` is None."""
+
+    result = Signal(str, str, str, str)
 
     def __init__(self, jobs, folder, parent=None):
         super().__init__(parent)
-        self.jobs, self.folder = jobs, Path(folder)
+        self.jobs, self.folder = jobs, Path(folder) if folder else None
 
     def run(self):
         for job in self.jobs:
@@ -97,10 +99,15 @@ class ExportWorker(QThread):
                     raise ValueError("確認後に元画像が変更されています。")
                 image = load_image(job.source)
                 output = render(image, job.regions, job.block, job.margin)
+                if self.folder is None:
+                    overwrite_source(output, job.source)
+                    self.result.emit(job.uid, str(job.source), fingerprint(job.source), "")
+                    del image, output
+                    continue
                 # Reserve a fresh filename, including for equal stems in different folders.
                 suffix = 1
                 while True:
-                    name = job.source.stem + "_mosaic" + (f"_{suffix}" if suffix > 1 else "") + ".png"
+                    name = job.source.stem + "_censored" + (f"_{suffix}" if suffix > 1 else "") + ".png"
                     candidate = self.folder / name
                     try:
                         fd = os.open(candidate, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
@@ -110,9 +117,9 @@ class ExportWorker(QThread):
                     except FileExistsError:
                         suffix += 1
                 atomic_export(output, target, job.source)
-                self.result.emit(job.uid, str(target), "")
+                self.result.emit(job.uid, str(target), "", "")
                 del image, output
             except Exception as exc:
                 if target is not None:
                     target.unlink(missing_ok=True)
-                self.result.emit(job.uid, "", str(exc))
+                self.result.emit(job.uid, "", "", str(exc))

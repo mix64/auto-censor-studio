@@ -15,7 +15,7 @@ dynamic = ["dependencies"]
 auto-censor-studio = "auto_censor_studio.__main__:main"
 
 [project.optional-dependencies]
-dev = ["ruff==0.15.6", "build>=1.2"]
+dev = ["ruff==0.15.6", "build>=1.2", "pyinstaller==6.22.3"]
 
 [tool.setuptools.dynamic]
 dependencies = {file = ["requirements.txt"]}

@@ -5,7 +5,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, QSize, QRectF, QVariantAnimation, QEasingCurve
 from PySide6.QtGui import QColor, QPainter, QPen, QFont, QFontDatabase, QFontMetrics
-from PySide6.QtWidgets import QPushButton, QSizePolicy
+from PySide6.QtWidgets import QPushButton, QSizePolicy, QSpinBox
 
 COLORS = {
     "primary": "#6842BE",
@@ -187,3 +187,25 @@ class MButton(QPushButton):
         painter.setFont(font)
         if self.text():
             painter.drawText(QRectF(x, 0, text_width + 2, self.height()), Qt.AlignmentFlag.AlignVCenter, self.text())
+
+
+class HoverSpinBox(QSpinBox):
+    """Spin box whose step arrows appear only while the pointer is over it.
+
+    Qt style sheets misapply ``QSpinBox:hover::up-arrow`` to the idle state, so the
+    hover is exposed as the ``hovered`` property for the style sheet to select on.
+    """
+
+    def _set_hovered(self, hovered):
+        self.setProperty("hovered", hovered)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self.update()
+
+    def enterEvent(self, event):
+        self._set_hovered(True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._set_hovered(False)
+        super().leaveEvent(event)

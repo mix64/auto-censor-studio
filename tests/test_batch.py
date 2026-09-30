@@ -147,6 +147,49 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(len(w.documents), 2)
         self.assertIsNotNone(w.image)
 
+    def test_new_images_use_fixed_defaults_and_outlines_start_hidden(self):
+        w = self.w
+        self.assertEqual([(d.block, d.margin) for d in w.documents], [(16, 10)] * 3)
+        self.assertEqual((w.block.value(), w.margin.value()), (16, 10))
+        self.assertFalse(w.outline.isChecked())
+        self.assertFalse(w.canvas.outlines)
+
+    def test_adding_many_images_skips_duplicates_and_reports_broken_files(self):
+        w = self.w
+        broken = self.root / "broken.png"
+        broken.write_bytes(b"not a PNG")
+        extra = self.root / "extra.png"
+        Image.new("RGB", (50, 50), "blue").save(extra)
+        with patch.object(w, "error") as error:
+            w.open_paths([self.paths[0], broken, extra, extra])
+        self.assertEqual([d.source for d in w.documents], [p.resolve() for p in self.paths + [extra]])
+        self.assertIn("broken.png", error.call_args.args[0])
+        self.assertEqual(w.document_index, 0)
+
+    def test_clear_images_resets_the_loaded_list_and_keeps_sources(self):
+        w = self.w
+        hashes = [fingerprint(p) for p in self.paths]
+        w.dirty = False
+        for document in w.documents:
+            document.dirty = False
+        w.clear_images()
+        self.assertEqual(w.documents, [])
+        self.assertIsNone(w.image)
+        self.assertFalse(w.clear_images_action.isEnabled())
+        self.assertEqual(hashes, [fingerprint(p) for p in self.paths])
+        w.open_paths(self.paths)
+        self.assertEqual(len(w.documents), 3)
+
+    def test_save_dialogs_default_to_the_loaded_image_folder(self):
+        w = self.w
+        w.documents[0].reviewed = True
+        with patch.object(QFileDialog, "getExistingDirectory", return_value="") as folder:
+            w.export_reviewed()
+        self.assertEqual(folder.call_args.args[2], str(w.current_document().source.parent))
+        with patch.object(QFileDialog, "getSaveFileName", return_value=("", "")) as save:
+            w.save_batch_work()
+        self.assertEqual(Path(save.call_args.args[2]).parent, w.current_document().source.parent)
+
     def test_cancellation_leaves_remaining_images_retryable(self):
         w = self.w
         gate = threading.Event()
@@ -183,7 +226,7 @@ class BatchTests(unittest.TestCase):
         hashes = [fingerprint(p) for p in self.paths]
         output = self.root / "export"
         output.mkdir()
-        sentinel = output / "同じ名前_mosaic.png"
+        sentinel = output / "同じ名前_censored.png"
         sentinel.write_bytes(b"existing file")
         w.export_reviewed(output)
         self.wait(lambda: not w.export_running)
@@ -198,6 +241,30 @@ class BatchTests(unittest.TestCase):
             self.wait(lambda: not w.export_running)
         self.assertEqual(w.export_count, 1)
         self.assertFalse(w.documents[0].reviewed)
+
+    def test_overwrite_reviewed_replaces_only_reviewed_sources(self):
+        w = self.w
+        self.start()
+        self.wait(lambda: not w.batch_running)
+        w.switch_document(0)
+        w.mark_reviewed()
+        w.mark_reviewed()
+        hashes = [fingerprint(p) for p in self.paths]
+        # Solid test images keep their pixels under a mosaic, so detect the replacement by file identity.
+        inodes = [p.stat().st_ino for p in self.paths]
+        with patch.object(w, "confirm_overwrite", return_value=True) as confirm:
+            w.overwrite_reviewed()
+        confirm.assert_called_once_with(2)
+        self.wait(lambda: not w.export_running)
+        after = [fingerprint(p) for p in self.paths]
+        self.assertTrue(all(p.stat().st_ino != i for p, i in zip(self.paths[:2], inodes)))
+        self.assertEqual(self.paths[2].stat().st_ino, inodes[2])
+        self.assertEqual(after[2], hashes[2])
+        self.assertEqual([d.exported for d in w.documents[:2]], [str(p.resolve()) for p in self.paths[:2]])
+        self.assertEqual([d.digest for d in w.documents[:2]], after[:2])
+        self.assertTrue(all(not d.regions and d.reviewed for d in w.documents[:2]))
+        self.assertEqual(w.current_document().regions, w.regions)
+        self.assertFalse(list(self.root.rglob(".mosaic-*")))
 
     def test_batch_project_roundtrip_and_save_all_from_close_flow(self):
         w = self.w

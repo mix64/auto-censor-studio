@@ -1,11 +1,12 @@
 """Coordinates image selection, background processing, review and export."""
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from .. import APP_NAME
 from dataclasses import replace
 import copy
-from PySide6.QtWidgets import QFileDialog
-from ..core.images import load_image, fingerprint, minimum_block
+from PySide6.QtWidgets import QFileDialog, QMessageBox
+from ..core.images import load_image, check_image, fingerprint
 from ..core.regions import region_covers
 from ..core.documents import Document, save_session
 from ..services.workers import BatchWorker, ExportWorker
@@ -23,6 +24,10 @@ class BatchMixin:
         self.export_worker = None
         self.batch_errors = []
         self._switching = False
+
+    def default_folder(self):
+        document = self.current_document() or (self.documents[0] if self.documents else None)
+        return str(document.source.parent) if document else ""
 
     def current_document(self):
         return self.documents[self.document_index] if 0 <= self.document_index < len(self.documents) else None
@@ -75,7 +80,14 @@ class BatchMixin:
             and not self.export_running
             and any(d.reviewed for d in self.documents)
         )
+        self.overwrite_reviewed_action.setEnabled(
+            not self.busy
+            and not self.batch_running
+            and not self.export_running
+            and any(d.reviewed and d.regions for d in self.documents)
+        )
         self.remove_image_action.setEnabled(can_switch and not self.batch_running and bool(self.documents))
+        self.clear_images_action.setEnabled(can_switch and not self.batch_running and bool(self.documents))
 
     def open_paths(self, paths):
         if self.busy or self.export_running:
@@ -83,35 +95,42 @@ class BatchMixin:
         self.sync_document()
         first = None
         errors = []
+        known = {d.source: i for i, d in enumerate(self.documents)}
+        added = []
         for path in paths:
             source = Path(path).resolve()
-            existing = next((i for i, d in enumerate(self.documents) if d.source == source), None)
-            if existing is not None:
+            if source in known:
                 if first is None:
-                    first = existing
-                continue
-            try:
-                if len(self.documents) >= 1000:
-                    raise ValueError("画像は1,000枚まで追加できます。")
-                image = load_image(source)
-                document = Document(
-                    source,
-                    fingerprint(source),
-                    minimum_block(image.size),
-                    threshold=self.preferences.value("detection/threshold", 0.30, type=float),
-                    tiled=self.preferences.value("detection/tiled", True, type=bool),
-                )
-                self.documents.append(document)
-                if first is None:
-                    first = len(self.documents) - 1
-                del image
-            except Exception as exc:
+                    first = known[source]
+            elif source not in added:
+                added.append(source)
+        # Hashing releases the GIL, so reading many large files in parallel is much faster.
+        with ThreadPoolExecutor(max_workers=min(8, len(added) or 1)) as pool:
+            inspected = list(pool.map(self.inspect_source, added))
+        threshold = self.preferences.value("detection/threshold", 0.30, type=float)
+        tiled = self.preferences.value("detection/tiled", True, type=bool)
+        for source, (digest, exc) in zip(added, inspected):
+            if exc is None and len(self.documents) >= 1000:
+                exc = ValueError("画像は1,000枚まで追加できます。")
+            if exc is not None:
                 errors.append(f"{source.name}: {exc}")
+                continue
+            self.documents.append(Document(source, digest, threshold=threshold, tiled=tiled))
+            if first is None:
+                first = len(self.documents) - 1
         if first is not None:
             self.switch_document(first)
         self.update_enabled()
         if errors:
             self.error("\n".join(errors))
+
+    @staticmethod
+    def inspect_source(source):
+        try:
+            check_image(source)
+            return fingerprint(source), None
+        except Exception as exc:
+            return None, exc
 
     def switch_document(self, index):
         if self.busy or self.export_running or not 0 <= index < len(self.documents):
@@ -286,26 +305,72 @@ class BatchMixin:
         if not jobs:
             return
         if not folder:
-            folder = QFileDialog.getExistingDirectory(self, "確認済み画像の保存先フォルダー")
+            folder = QFileDialog.getExistingDirectory(self, "確認済み画像の保存先フォルダー", self.default_folder())
         if not folder:
             return
+        self.start_export(jobs, folder, f"確認済み {len(jobs)}枚を保存中…")
+
+    def overwrite_reviewed(self):
+        if self.busy or self.batch_running or self.export_running:
+            return
+        self.cancel_drawing()
+        self.sync_document()
+        # Images reviewed with no regions have nothing to censor, so their files are left alone.
+        jobs = [
+            replace(d, regions=copy.deepcopy(d.regions), undo=[], redo=[])
+            for d in self.documents
+            if d.reviewed and d.regions
+        ]
+        if not jobs or not self.confirm_overwrite(len(jobs)):
+            return
+        self.start_export(jobs, None, f"確認済み {len(jobs)}枚を元画像に上書き中…")
+
+    def start_export(self, jobs, folder, message):
         self.export_running = True
         self.export_errors, self.export_count = [], 0
         self.export_worker = ExportWorker(jobs, folder, self)
         self.export_worker.result.connect(self.batch_export_result)
         self.export_worker.finished.connect(self.batch_export_finished)
         self.progress.show()
-        self.status.setText(f"確認済み {len(jobs)}枚を保存中…")
+        self.status.setText(message)
         self.update_enabled()
         self.export_worker.start()
 
-    def batch_export_result(self, uid, path, error):
+    def confirm_overwrite(self, count):
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Icon.Warning)
+        dialog.setWindowTitle("元画像に上書き")
+        dialog.setText(f"{count}枚の元画像をモザイク済みの画像で置き換えます。")
+        dialog.setInformativeText("元の画像には戻せません。必要なら先に元画像のコピーを取ってください。")
+        overwrite = dialog.addButton("上書きする", QMessageBox.ButtonRole.DestructiveRole)
+        cancel = dialog.addButton("キャンセル", QMessageBox.ButtonRole.RejectRole)
+        dialog.setDefaultButton(cancel)
+        dialog.exec()
+        return dialog.clickedButton() == overwrite
+
+    def adopt_overwritten(self, document, digest):
+        # The source now holds the mosaic, so keeping the regions would censor it twice on the next save.
+        document.digest = digest
+        document.regions, document.undo, document.redo = [], [], []
+        document.detected, document.reviewed, document.dirty = True, True, False
+        document.exported = str(document.source)
+        document.error = ""
+        document.notice = "元画像に上書き保存しました。"
+
+    def reload_current(self):
+        # Clearing the image first stops switch_document from syncing stale on-screen regions back.
+        self.image = None
+        self.switch_document(self.document_index)
+
+    def batch_export_result(self, uid, path, digest, error):
         document = next(d for d in self.documents if d.uid == uid)
         if error:
             document.error = error
             document.reviewed = False
             self.export_errors.append(f"{document.source.name}: {error}")
         else:
+            if digest:
+                self.adopt_overwritten(document, digest)
             document.exported = path
             self.export_count += 1
         self.update_batch_ui()
@@ -313,8 +378,12 @@ class BatchMixin:
     def batch_export_finished(self):
         self.export_running = False
         self.progress.hide()
+        overwritten = self.export_worker.folder is None
+        document = self.current_document()
+        if overwritten and document and document.exported == str(document.source):
+            self.reload_current()
         self.status.setText(
-            f"{self.export_count}枚を保存しました。"
+            f"{self.export_count}枚を{'元画像に上書き' if overwritten else ''}保存しました。"
             + (f" 失敗 {len(self.export_errors)}枚。" if self.export_errors else "")
         )
         self.update_enabled()
@@ -327,7 +396,8 @@ class BatchMixin:
         if self.busy or self.batch_running or self.export_running:
             return False
         self.sync_document()
-        path, _ = QFileDialog.getSaveFileName(self, "すべての作業を保存", "mosaic.batch.json", "作業ファイル (*.json)")
+        proposed = Path(self.default_folder()) / "mosaic.batch.json"
+        path, _ = QFileDialog.getSaveFileName(self, "すべての作業を保存", str(proposed), "作業ファイル (*.json)")
         if not path:
             return False
         if not path.lower().endswith(".json"):
@@ -355,18 +425,33 @@ class BatchMixin:
         if self.documents:
             self.switch_document(min(index, len(self.documents) - 1))
         else:
-            self.timer.stop()
-            self.image = self.source = self.rendered = None
-            self.regions = []
-            self.undo_stack, self.redo_stack = [], []
-            self.dirty = False
-            self.canvas.regions = []
-            self.canvas.picture.setPixmap(type(self.canvas.picture.pixmap())())
-            self.canvas.size_ = (0, 0)
-            self.canvas.selected = ""
-            self.canvas.draw_regions()
-            self.canvas.placeholder.setText("PNGをドロップ、または「開く」で選択")
-            self.canvas.placeholder.show()
-            self.setWindowTitle(APP_NAME)
-            self.status.setText("")
-            self.update_enabled()
+            self.show_empty()
+
+    def clear_images(self):
+        if self.busy or self.batch_running or self.export_running or not self.documents:
+            return
+        # Source files are never deleted; only the loaded list is reset.
+        if not self.confirm_discard():
+            return
+        self.cancel_drawing()
+        self.documents = []
+        self.document_index = -1
+        self.show_empty()
+        self.status.setText("読み込んだ画像をすべて一覧から外しました。")
+
+    def show_empty(self):
+        self.timer.stop()
+        self.image = self.source = self.rendered = None
+        self.regions = []
+        self.undo_stack, self.redo_stack = [], []
+        self.dirty = False
+        self.canvas.regions = []
+        self.canvas.picture.setPixmap(type(self.canvas.picture.pixmap())())
+        self.canvas.size_ = (0, 0)
+        self.canvas.selected = ""
+        self.canvas.draw_regions()
+        self.canvas.placeholder.setText("PNGをドロップ、または「開く」で選択")
+        self.canvas.placeholder.show()
+        self.setWindowTitle(APP_NAME)
+        self.status.setText("")
+        self.update_enabled()

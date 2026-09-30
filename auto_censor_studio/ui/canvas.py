@@ -12,6 +12,17 @@ from PySide6.QtWidgets import (
 from .theme import EmptyState, COLORS
 
 from ..core import Region, expanded_box, region_contains
+from ..core.images import DEFAULT_MARGIN
+
+
+def ring_path(rings):
+    path = QPainterPath()
+    for ring in rings:
+        path.moveTo(*ring[0])
+        for point in ring[1:]:
+            path.lineTo(*point)
+        path.closeSubpath()
+    return path
 
 
 def pixmap(image):
@@ -38,11 +49,12 @@ class Canvas(QGraphicsView):
         self.size_ = (0, 0)
         self.selected = ""
         self.mode = "select"
-        self.margin = 15
-        self.outlines = True
+        self.margin = DEFAULT_MARGIN
+        self.outlines = False
         self.drag = None
         self.lasso = None
         self.replace_uid = ""
+        self.exclude_uid = ""
         self.pan = None
         self.fit_active = True
         self.setAcceptDrops(True)
@@ -107,27 +119,27 @@ class Canvas(QGraphicsView):
             x0, y0, x1, y1 = expanded_box(r, self.size_, self.margin)
             pen = QPen(QColor(129, 168, 255, 100), 1, Qt.PenStyle.DashLine)
             pen.setCosmetic(True)
-            path = QPainterPath()
-            for ring in r.points():
-                path.moveTo(*ring[0])
-                for point in ring[1:]:
-                    path.lineTo(*point)
-                path.closeSubpath()
             if r.contours:
+                path = ring_path(r.points())
                 stroke = QPainterPathStroker()
                 stroke.setWidth(2 * min(r.w, r.h) * self.margin / 100)
                 stroke.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
                 outer_path = path.united(stroke.createStroke(path)) if self.margin else path
-                outer = self.scene_.addPath(outer_path, pen)
             else:
-                outer = self.scene_.addRect(QRectF(x0, y0, x1 - x0, y1 - y0), pen)
-            self.overlays.append(outer)
+                path, outer_path = QPainterPath(), QPainterPath()
+                path.addRect(QRectF(r.x, r.y, r.w, r.h))
+                outer_path.addRect(QRectF(x0, y0, x1 - x0, y1 - y0))
+            if r.excludes:
+                carved = ring_path(r.excludes)
+                path, outer_path = path.subtracted(carved), outer_path.subtracted(carved)
+            self.overlays.append(self.scene_.addPath(outer_path, pen))
             pen = QPen(color, 2 if active else 1.5)
             pen.setCosmetic(True)
-            rect = (
-                self.scene_.addPath(path, pen) if r.contours else self.scene_.addRect(QRectF(r.x, r.y, r.w, r.h), pen)
-            )
-            self.overlays.append(rect)
+            self.overlays.append(self.scene_.addPath(path, pen))
+            if active and r.excludes:
+                pen = QPen(QColor("#ffb4a9"), 1.5, Qt.PenStyle.DashLine)
+                pen.setCosmetic(True)
+                self.overlays.append(self.scene_.addPath(ring_path(r.excludes), pen))
             if active:
                 handles = (
                     [point for ring in r.points() for point in ring]
@@ -266,7 +278,12 @@ class Canvas(QGraphicsView):
             self.lasso = None
             if len(points) >= 3 and abs(cv2.contourArea(points)) >= 4:
                 simplified = cv2.approxPolyDP(points, max(0.5, 1 / self.transform().m11()), True).reshape(-1, 2)
-                if 3 <= len(simplified) <= 2048:
+                exclude = next((r for r in self.regions if r.uid == self.exclude_uid), None)
+                if exclude is not None and 3 <= len(simplified) <= 2048 and len(exclude.excludes or []) < 64:
+                    exclude.excludes = (exclude.excludes or []) + [simplified.tolist()]
+                    self.select(exclude.uid)
+                    self.edited.emit(self.lasso_before)
+                elif exclude is None and 3 <= len(simplified) <= 2048:
                     r = next((r for r in self.regions if r.uid == self.replace_uid), None)
                     new = r is None
                     r = r or Region(0, 0, 1, 1)
@@ -275,7 +292,7 @@ class Canvas(QGraphicsView):
                             self.regions.append(r)
                         self.select(r.uid)
                         self.edited.emit(self.lasso_before)
-            self.replace_uid = ""
+            self.replace_uid = self.exclude_uid = ""
             self.draw_regions()
             return
         if self.drag:
