@@ -42,7 +42,7 @@ def verified_model(key):
     spec = MODELS[key]
     target = model_directory() / spec.filename
     if not target.is_file() or fingerprint(target) != spec.sha256:
-        raise ValueError(f"モデルが未準備または破損しています: {spec.filename}\nsetup.ps1を実行してください。")
+        raise ValueError(f"モデルが未準備または破損しています: {spec.filename}\nStart.cmdを実行してください。")
     return target
 
 

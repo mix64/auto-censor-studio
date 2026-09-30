@@ -1,5 +1,5 @@
 include README.md CONTRIBUTING.md THIRD_PARTY.md LICENSE requirements.txt
-include Start.cmd launch.ps1 setup.ps1
+include Start.cmd
 include tools/build_icon.py
 recursive-include auto_censor_studio/assets *
 global-exclude *.pyc *.onnx preferences.ini
