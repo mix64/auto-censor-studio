@@ -9,7 +9,7 @@ from PIL import Image
 from auto_censor_studio.core import (
     Region,
     render,
-    minimum_block,
+    default_block,
     expanded_box,
     atomic_export,
     load_image,
@@ -32,7 +32,7 @@ class EngineTests(unittest.TestCase):
 
     def test_guideline_rounds_up_and_uses_whole_image(self):
         for size, expected in [((200, 300), 4), ((400, 200), 4), ((2001, 1000), 21)]:
-            self.assertEqual(minimum_block(size), expected)
+            self.assertEqual(default_block(size), expected)
 
     def test_exact_square_blocks_and_untouched_pixels(self):
         r = Region(16, 24, 64, 48)
@@ -93,6 +93,8 @@ class EngineTests(unittest.TestCase):
             source = Path(folder) / "source.png"
             project = Path(folder) / "work.json"
             self.image.save(source)
+            save_project(project, source, [Region(2, 3, 50, 60)], 1, 15)
+            self.assertEqual(read_project(project)[3], 1)
             save_project(project, source, [Region(2, 3, 50, 60)], 8, 15)
             _, loaded, regions, block, margin = read_project(project)
             self.assertEqual(loaded.size, self.image.size)
@@ -171,6 +173,38 @@ class EngineTests(unittest.TestCase):
             data["regions"][0].pop("contours")
             project.write_text(json.dumps(data), encoding="utf-8")
             self.assertIsNone(read_project(project)[2][0].contours)
+
+
+    def test_excluded_part_keeps_original_pixels_even_inside_margin(self):
+        region = Region(20, 20, 60, 50)
+        region.set_points([[(20, 20), (80, 20), (80, 70), (20, 70)]])
+        hand = [[50, 10], [99, 10], [99, 60], [50, 60]]
+        region.excludes = [hand]
+        mask, (x, y) = region_mask(region, self.image.size, 20)
+        self.assertTrue(mask[30 - y, 30 - x])
+        self.assertFalse(mask[40 - y, 60 - x])
+        self.assertFalse(mask[15 - y, 85 - x])
+        out = np.asarray(render(self.image, [region], 8, 20))
+        np.testing.assert_array_equal(out[12:60, 51:99], self.pixels[12:60, 51:99])
+        self.assertTrue(np.any(out[25:65, 25:45] != self.pixels[25:65, 25:45]))
+        # A repeat detection over the excluded hand must not re-add the original box.
+        self.assertTrue(region_covers(region, Region(20, 20, 60, 50)))
+
+    def test_excludes_survive_project_save_and_invalid_points_are_rejected(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source, project = Path(folder) / "source.png", Path(folder) / "project.json"
+            self.image.save(source)
+            r = Region(10, 10, 60, 60)
+            r.excludes = [[[40, 40], [90, 40], [90, 90]]]
+            save_project(project, source, [r], 8, 10)
+            loaded = read_project(project)[2]
+            self.assertEqual(loaded[0].excludes, r.excludes)
+            self.assertEqual(render(self.image, [r], 8, 10).tobytes(), render(self.image, loaded, 8, 10).tobytes())
+            data = json.loads(project.read_text(encoding="utf-8"))
+            data["regions"][0]["excludes"][0][0] = [500, 40]
+            project.write_text(json.dumps(data), encoding="utf-8")
+            with self.assertRaises(ValueError):
+                read_project(project)
 
 
 if __name__ == "__main__":

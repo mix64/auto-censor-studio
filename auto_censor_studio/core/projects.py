@@ -8,7 +8,7 @@ import os
 import tempfile
 import uuid
 from .regions import Region, LABEL_NAMES
-from .images import fingerprint, load_image, minimum_block
+from .images import MAX_BLOCK, MIN_BLOCK, fingerprint, load_image
 
 
 def save_project(path, source, regions, block, margin):
@@ -47,7 +47,7 @@ def read_project_data(data):
         raise ValueError("元画像が変更されています。画像を開き直して範囲を確認してください。")
     image = load_image(source)
     block, margin = data["block"], data["margin"]
-    if not isinstance(block, int) or not minimum_block(image.size) <= block <= max(1000, minimum_block(image.size)):
+    if not isinstance(block, int) or not MIN_BLOCK <= block <= MAX_BLOCK:
         raise ValueError("ブロックサイズが不正です。")
     if not isinstance(margin, int) or not 0 <= margin <= 100:
         raise ValueError("余白設定が不正です。")
@@ -87,6 +87,20 @@ def read_project_data(data):
                         or not all(isinstance(v, (int, float)) and math.isfinite(v) and 0 <= v <= 1 for v in point)
                     ):
                         raise ValueError("輪郭の座標が不正です。")
+        if r.excludes is not None:
+            if not isinstance(r.excludes, list) or not 1 <= len(r.excludes) <= 64:
+                raise ValueError("除外範囲の形式が不正です。")
+            for ring in r.excludes:
+                if not isinstance(ring, list) or not 3 <= len(ring) <= 2048:
+                    raise ValueError("除外範囲の点数が不正です。")
+                for point in ring:
+                    if (
+                        not isinstance(point, list)
+                        or len(point) != 2
+                        or not all(isinstance(v, (int, float)) and math.isfinite(v) for v in point)
+                        or not (0 <= point[0] <= image.width and 0 <= point[1] <= image.height)
+                    ):
+                        raise ValueError("除外範囲の座標が不正です。")
         r.uid = uuid.uuid4().hex
         regions.append(r)
     return source, image, regions, block, margin

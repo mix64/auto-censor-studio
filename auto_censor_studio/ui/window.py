@@ -15,7 +15,16 @@ from PySide6.QtWidgets import (
 from .theme import apply_theme
 from .branding import application_icon
 
-from ..core import minimum_block, render, atomic_export, save_project, read_project, region_covers
+from ..core import (
+    default_block,
+    render,
+    atomic_export,
+    overwrite_source,
+    fingerprint,
+    save_project,
+    read_project,
+    region_covers,
+)
 from ..services.segmentation import Segmenter
 from ..services.detection import Detector
 from .batch_controller import BatchMixin
@@ -134,10 +143,14 @@ class MainWindow(BatchMixin, QMainWindow):
         self.project_save_btn.setEnabled(
             bool(self.documents) and not self.busy and not self.batch_running and not self.export_running
         )
+        self.overwrite_action.setEnabled(editing and not self.batch_running and bool(self.regions))
         self.detect_btn.setEnabled(editing and not self.batch_running)
         self.draw_btn.setEnabled(editing and not self.batch_running)
         self.delete_btn.setEnabled(editing and bool(self.canvas.selected))
         self.redraw_action.setEnabled(editing and bool(self.canvas.selected))
+        self.exclude_action.setEnabled(editing and bool(self.canvas.selected))
+        selected = next((r for r in self.regions if r.uid == self.canvas.selected), None)
+        self.clear_excludes_action.setEnabled(editing and bool(selected and selected.excludes))
         self.refine_action.setEnabled(editing and not self.batch_running and bool(self.canvas.selected))
         self.undo_btn.setEnabled(editing and bool(self.undo_stack))
         self.redo_btn.setEnabled(editing and bool(self.redo_stack))
@@ -187,13 +200,11 @@ class MainWindow(BatchMixin, QMainWindow):
         self.canvas.margin = margin
         for widget in (self.block, self.margin):
             widget.blockSignals(True)
-        minimum = minimum_block(image.size)
-        self.block.setRange(minimum, max(1000, minimum))
         self.block.setValue(block)
         self.margin.setValue(margin)
         for widget in (self.block, self.margin):
             widget.blockSignals(False)
-        self.block.setToolTip(f"1ブロックの一辺。この画像の目安は{minimum}px以上です。")
+        self.block.setToolTip(f"1ブロックの一辺。この画像の目安は{default_block(image.size)}px以上です。")
         self.rendered = render(image, regions, block, margin)
         self.original.setChecked(False)
         self.draw_btn.setChecked(False)
@@ -219,9 +230,9 @@ class MainWindow(BatchMixin, QMainWindow):
     def set_mode(self, mode):
         self.canvas.mode = mode
         self.canvas.lasso = None
-        self.canvas.replace_uid = ""
+        self.canvas.replace_uid = self.canvas.exclude_uid = ""
         self.canvas.setCursor(Qt.CursorShape.CrossCursor if mode in ("draw", "lasso") else Qt.CursorShape.ArrowCursor)
-        if not self.outline.isChecked():
+        if mode in ("draw", "lasso") and not self.outline.isChecked():
             self.outline.setChecked(True)
 
     def start_lasso(self, replace=False):
@@ -231,6 +242,23 @@ class MainWindow(BatchMixin, QMainWindow):
         self.set_mode("lasso")
         self.canvas.replace_uid = self.canvas.selected if replace else ""
         self.status.setText("輪郭をドラッグで囲んで離すと確定 · Escでキャンセル")
+
+    def start_exclude(self):
+        if self.image is None or self.edit_locked() or not self.canvas.selected:
+            return
+        uid = self.canvas.selected
+        self.draw_btn.setChecked(False)
+        self.set_mode("lasso")
+        self.canvas.exclude_uid = uid
+        self.status.setText("モザイクから外す部分をドラッグで囲んで離すと確定 · Escでキャンセル")
+
+    def clear_excludes(self):
+        region = next((r for r in self.regions if r.uid == self.canvas.selected), None)
+        if region is None or not region.excludes or self.edit_locked():
+            return
+        self.remember()
+        region.excludes = None
+        self.changed()
 
     def cancel_drawing(self):
         if self.busy:
@@ -411,7 +439,7 @@ class MainWindow(BatchMixin, QMainWindow):
     def export(self):
         if self.image is None or self.edit_locked():
             return
-        proposed = self.source.with_name(self.source.stem + "_mosaic.png")
+        proposed = self.source.with_name(self.source.stem + "_censored.png")
         target, chosen = QFileDialog.getSaveFileName(
             self, "処理済み画像を保存", str(proposed), "PNG (*.png);;JPEG (*.jpg)"
         )
@@ -431,6 +459,31 @@ class MainWindow(BatchMixin, QMainWindow):
             # Exporting pixels does not save the editable project.
         except Exception as exc:
             self.error(exc)
+
+    def overwrite_current(self):
+        document = self.current_document()
+        if self.image is None or document is None or self.edit_locked() or self.batch_running:
+            return
+        if not self.regions:
+            self.status.setText("範囲が0件なので、上書きする内容がありません。")
+            return
+        if not self.confirm_overwrite(1):
+            return
+        self.cancel_drawing()
+        try:
+            self.timer.stop()
+            self.refresh_image()
+            if fingerprint(self.source) != document.digest:
+                raise ValueError("読み込んだあとに元画像が変更されています。一覧から外して読み込み直してください。")
+            overwrite_source(self.rendered, self.source)
+            digest = fingerprint(self.source)
+        except Exception as exc:
+            self.error(exc)
+            return
+        count = len(self.regions)
+        self.adopt_overwritten(document, digest)
+        self.reload_current()
+        self.status.setText(f"元画像に上書き保存しました · {count}か所\n{self.source.name}")
 
     def save_work(self):
         if self.busy or self.batch_running or self.export_running:
@@ -460,7 +513,7 @@ class MainWindow(BatchMixin, QMainWindow):
     def open_work(self):
         if self.busy or self.batch_running or self.export_running or not self.confirm_discard():
             return
-        path, _ = QFileDialog.getOpenFileName(self, "作業を開く", "", "作業ファイル (*.json)")
+        path, _ = QFileDialog.getOpenFileName(self, "作業を開く", self.default_folder(), "作業ファイル (*.json)")
         if path:
             self.load_work(path)
 
@@ -469,7 +522,6 @@ class MainWindow(BatchMixin, QMainWindow):
             return
         try:
             import json
-            from ..core import fingerprint
 
             if Path(path).stat().st_size > 64_000_000:
                 raise ValueError("作業ファイルが大きすぎます。")

@@ -7,6 +7,7 @@ from . import APP_NAME
 from .ui.window import MainWindow
 from .ui.theme import STYLE
 from .ui.branding import application_icon, configure_taskbar
+from .ui.model_setup import ensure_models
 
 
 def main():
@@ -16,6 +17,8 @@ def main():
     app.setWindowIcon(application_icon())
     app.setStyle("Fusion")
     app.setStyleSheet(STYLE)
+    # Without models the editor still opens; detection reports the missing files.
+    ensure_models()
     window = MainWindow()
     window.show()
     if len(sys.argv) > 1:

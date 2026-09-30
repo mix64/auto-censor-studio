@@ -21,7 +21,7 @@ auto_censor_studio/
   paths.py     # ユーザーデータの保存先
   __main__.py  # アプリの起動
 tests/         # 単体、GUI、一括処理の回帰テスト
-tools/         # アイコンの生成スクリプト
+tools/         # アイコンとexeの生成スクリプト
 ```
 
 `services/` はUIのウィジェットを直接変更しません。
@@ -31,6 +31,10 @@ tools/         # アイコンの生成スクリプト
 モデルを差し替えるときは、ここと [THIRD_PARTY.md](THIRD_PARTY.md) の両方を更新してください。
 
 アプリアイコンは `auto_censor_studio/assets/app-icon.svg` を編集し、`python tools/build_icon.py` でPNGとICOを生成し直します。
+
+配布用の exe は `python tools/build_exe.py` で `dist/AutoCensorStudio/` に生成します。
+ソースを変えたら exe を作り直さないと反映されません。
+`auto_censor_studio/assets/` の中身は exe に同梱するので、アセットを追加したときも作り直してください。
 
 ## 検証
 

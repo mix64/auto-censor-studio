@@ -11,7 +11,6 @@ from PySide6.QtWidgets import (
     QMenu,
     QDialog,
     QFormLayout,
-    QSpinBox,
     QDoubleSpinBox,
     QCheckBox,
     QProgressBar,
@@ -19,8 +18,9 @@ from PySide6.QtWidgets import (
     QSizePolicy,
 )
 from .theme import ElideLabel
-from .widgets import MButton
+from .widgets import MButton, HoverSpinBox
 from ..core import region_contains
+from ..core.images import DEFAULT_BLOCK, DEFAULT_MARGIN, MAX_BLOCK, MIN_BLOCK
 
 
 def build_ui(w, Canvas):
@@ -53,26 +53,25 @@ def build_ui(w, Canvas):
     adjustments.setContentsMargins(8, 0, 8, 0)
     adjustments.setSpacing(6)
     adjustments.addWidget(QLabel("粗さ"))
-    w.block = QSpinBox()
-    w.block.setRange(4, 1000)
+    w.block = HoverSpinBox()
+    w.block.setRange(MIN_BLOCK, MAX_BLOCK)
+    w.block.setValue(DEFAULT_BLOCK)
     w.block.setSuffix(" px")
-    w.block.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
-    w.block.setFixedSize(88, 40)
+    w.block.setFixedSize(104, 40)
     w.block.setAlignment(Qt.AlignmentFlag.AlignCenter)
     w.block.setAccessibleName("モザイクの粗さ")
     w.block.valueChanged.connect(w.mosaic_changed)
     adjustments.addWidget(w.block)
     adjustments.addSpacing(6)
     adjustments.addWidget(QLabel("余白"))
-    w.margin = QSpinBox()
+    w.margin = HoverSpinBox()
     w.margin.setRange(0, 100)
-    w.margin.setValue(15)
+    w.margin.setValue(DEFAULT_MARGIN)
     w.margin.setSuffix(" %")
-    w.margin.setFixedSize(76, 40)
+    w.margin.setFixedSize(92, 40)
     w.margin.setAlignment(Qt.AlignmentFlag.AlignCenter)
     w.margin.setAccessibleName("モザイク範囲の余白")
     w.margin.setToolTip("輪郭から外側に広げる範囲。現在の画像に適用します。")
-    w.margin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
     w.margin.valueChanged.connect(w.mosaic_changed)
     adjustments.addWidget(w.margin)
     bar.addWidget(w.mosaic_controls)
@@ -186,7 +185,7 @@ def build_ui(w, Canvas):
     w.more_menu.addSeparator()
     w.outline = w.more_menu.addAction("枠を表示")
     w.outline.setCheckable(True)
-    w.outline.setChecked(True)
+    w.outline.setChecked(False)
     w.outline.toggled.connect(w.toggle_outlines)
     w.original = w.more_menu.addAction("元画像を表示")
     w.original.setCheckable(True)
@@ -197,13 +196,19 @@ def build_ui(w, Canvas):
     w.lasso_action = w.more_menu.addAction("手描きで囲む", w.start_lasso)
     w.redraw_action = w.more_menu.addAction("輪郭を描き直す", lambda: w.start_lasso(replace=True))
     w.refine_action = w.more_menu.addAction("輪郭を再推定", lambda: w.refine_selected())
+    w.exclude_action = w.more_menu.addAction("モザイクから外す部分を囲む", w.start_exclude)
+    w.clear_excludes_action = w.more_menu.addAction("外した部分を元に戻す", w.clear_excludes)
     w.more_menu.addSeparator()
     w.delete_btn = w.more_menu.addAction("選択範囲を削除", w.remove_selected)
     w.redo_btn = w.more_menu.addAction("やり直す", w.redo)
     w.more_menu.addSeparator()
+    w.overwrite_action = w.more_menu.addAction("元画像に上書き保存…", w.overwrite_current)
+    w.overwrite_reviewed_action = w.more_menu.addAction("確認済みを元画像に上書き保存…", w.overwrite_reviewed)
+    w.more_menu.addSeparator()
     w.project_save_btn = w.more_menu.addAction("作業を保存…", w.save_work)
     w.project_open_btn = w.more_menu.addAction("作業を開く…", w.open_work)
     w.remove_image_action = w.more_menu.addAction("現在の画像を一覧から外す", w.remove_current_image)
+    w.clear_images_action = w.more_menu.addAction("すべての画像を一覧から外す", w.clear_images)
     w.more_btn.clicked.connect(lambda: w.more_menu.popup(w.more_btn.mapToGlobal(QPoint(0, w.more_btn.height() + 6))))
 
 
@@ -215,6 +220,8 @@ def canvas_menu(w, pos):
     menu = QMenu(w)
     menu.addAction(w.redraw_action)
     menu.addAction(w.refine_action)
+    menu.addAction(w.exclude_action)
+    menu.addAction(w.clear_excludes_action)
     menu.addSeparator()
     menu.addAction(w.delete_btn)
     menu.addAction(w.redo_btn)

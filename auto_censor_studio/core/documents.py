@@ -7,14 +7,15 @@ import json
 import os
 import tempfile
 from .projects import read_project_data
+from .images import DEFAULT_BLOCK, DEFAULT_MARGIN
 
 
 @dataclass
 class Document:
     source: Path
     digest: str
-    block: int
-    margin: int = 15
+    block: int = DEFAULT_BLOCK
+    margin: int = DEFAULT_MARGIN
     uid: str = field(default_factory=lambda: uuid.uuid4().hex)
     regions: list = field(default_factory=list)
     undo: list = field(default_factory=list)
