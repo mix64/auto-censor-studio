@@ -1,0 +1,1 @@
+"""Auto Censor Studio ui."""
