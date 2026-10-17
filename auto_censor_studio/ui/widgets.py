@@ -32,6 +32,7 @@ GLYPHS = {
     "next": 0xE5CC,
     "close": 0xE5CD,
     "crop": 0xE3C2,
+    "draw": 0xE746,
     "delete": 0xE92E,
     "download": 0xF090,
     "expand": 0xE5CF,

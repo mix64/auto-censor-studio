@@ -125,7 +125,7 @@ class MainWindow(BatchMixin, QMainWindow):
         for widget in (
             self.detect_btn,
             self.draw_btn,
-            self.lasso_action,
+            self.lasso_btn,
             self.block,
             self.margin,
             self.save_btn,
@@ -146,6 +146,7 @@ class MainWindow(BatchMixin, QMainWindow):
         self.overwrite_action.setEnabled(editing and not self.batch_running and bool(self.regions))
         self.detect_btn.setEnabled(editing and not self.batch_running)
         self.draw_btn.setEnabled(editing and not self.batch_running)
+        self.lasso_btn.setEnabled(editing and not self.batch_running)
         self.delete_btn.setEnabled(editing and bool(self.canvas.selected))
         self.redraw_action.setEnabled(editing and bool(self.canvas.selected))
         self.exclude_action.setEnabled(editing and bool(self.canvas.selected))
@@ -207,7 +208,7 @@ class MainWindow(BatchMixin, QMainWindow):
         self.block.setToolTip(f"1ブロックの一辺。この画像の目安は{default_block(image.size)}px以上です。")
         self.rendered = render(image, regions, block, margin)
         self.original.setChecked(False)
-        self.draw_btn.setChecked(False)
+        self.set_mode("select")
         self.canvas.set_image(self.rendered, new=True)
         self.refresh_regions()
         self.dirty = False
@@ -234,11 +235,20 @@ class MainWindow(BatchMixin, QMainWindow):
         self.canvas.setCursor(Qt.CursorShape.CrossCursor if mode in ("draw", "lasso") else Qt.CursorShape.ArrowCursor)
         if mode in ("draw", "lasso") and not self.outline.isChecked():
             self.outline.setChecked(True)
+        self.draw_btn.setChecked(mode == "draw")
+        self.lasso_btn.setChecked(mode == "lasso")
+
+    def toggle_mode(self, mode, checked):
+        if checked and self.canvas.mode != mode:
+            self.start_lasso() if mode == "lasso" else self.set_mode(mode)
+        elif not checked and self.canvas.mode == mode:
+            self.set_mode("select")
+        self.draw_btn.setChecked(self.canvas.mode == "draw")
+        self.lasso_btn.setChecked(self.canvas.mode == "lasso")
 
     def start_lasso(self, replace=False):
         if self.image is None or self.edit_locked():
             return
-        self.draw_btn.setChecked(False)
         self.set_mode("lasso")
         self.canvas.replace_uid = self.canvas.selected if replace else ""
         self.status.setText("輪郭をドラッグで囲んで離すと確定 · Escでキャンセル")
@@ -247,7 +257,6 @@ class MainWindow(BatchMixin, QMainWindow):
         if self.image is None or self.edit_locked() or not self.canvas.selected:
             return
         uid = self.canvas.selected
-        self.draw_btn.setChecked(False)
         self.set_mode("lasso")
         self.canvas.exclude_uid = uid
         self.status.setText("モザイクから外す部分をドラッグで囲んで離すと確定 · Escでキャンセル")
@@ -267,7 +276,6 @@ class MainWindow(BatchMixin, QMainWindow):
             self.regions[:] = self.canvas.drag[4]
             self.canvas.drag = None
             self.canvas.selected = ""
-        self.draw_btn.setChecked(False)
         self.set_mode("select")
         self.canvas.draw_regions()
 

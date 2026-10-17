@@ -68,6 +68,27 @@ class GuiTests(unittest.TestCase):
         QTest.mouseRelease(view.viewport(), Qt.MouseButton.LeftButton, pos=b)
         self.app.processEvents()
 
+    def test_lasso_button_is_exclusive_with_box_and_adds_freehand_region(self):
+        w = self.window
+        w.draw_btn.click()
+        w.lasso_btn.click()
+        self.assertEqual(w.canvas.mode, "lasso")
+        self.assertFalse(w.draw_btn.isChecked())
+        view = w.canvas
+        points = [view.mapFromScene(QPointF(*p)) for p in [(100, 100), (300, 120), (280, 300), (120, 260)]]
+        QTest.mousePress(view.viewport(), Qt.MouseButton.LeftButton, pos=points[0])
+        for point in points[1:]:
+            QTest.mouseMove(view.viewport(), point, delay=10)
+        QTest.mouseRelease(view.viewport(), Qt.MouseButton.LeftButton, pos=points[-1])
+        self.app.processEvents()
+        self.assertEqual(len(w.regions), 1)
+        self.assertIsNotNone(w.regions[0].contours)
+        self.assertEqual(w.canvas.mode, "select")
+        self.assertFalse(w.lasso_btn.isChecked())
+        w.lasso_btn.click()
+        w.lasso_btn.click()
+        self.assertEqual(w.canvas.mode, "select")
+
     def add_region(self):
         self.window.draw_btn.click()
         self.drag((100, 100), (300, 280))

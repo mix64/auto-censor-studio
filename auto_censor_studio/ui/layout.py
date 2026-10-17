@@ -39,14 +39,18 @@ def build_ui(w, Canvas):
         bar.addWidget(b)
         return b
 
+    def mode_button(mode, tip, icon):
+        b = MButton("", icon, height=44, tip=tip)
+        b.setCheckable(True)
+        b.toggled.connect(lambda checked: w.toggle_mode(mode, checked))
+        bar.addWidget(b)
+        return b
+
     w.open_btn = button("開く", w.open_dialog, "PNGを追加（複数選択可）", "folder")
     bar.addSpacing(8)
-    w.detect_btn = button("自動検出", w.detect, "男性器・女性器の候補を検出", "auto", "primary")
-    w.draw_btn = MButton("範囲追加", "add", height=44)
-    w.draw_btn.setCheckable(True)
-    w.draw_btn.setToolTip("対象を大まかに囲むと輪郭を自動抽出")
-    w.draw_btn.toggled.connect(lambda checked: w.set_mode("draw" if checked else "select"))
-    bar.addWidget(w.draw_btn)
+    w.detect_btn = button("", w.detect, "自動検出：男性器・女性器の候補を検出", "auto", "primary")
+    w.draw_btn = mode_button("draw", "範囲追加：対象を大まかに囲むと輪郭を自動抽出", "add")
+    w.lasso_btn = mode_button("lasso", "手書き追加：ドラッグで囲んだ形をそのまま範囲にする", "draw")
     w.undo_btn = button("", w.undo, "戻す", "undo", "ghost")
     w.mosaic_controls = QWidget()
     adjustments = QHBoxLayout(w.mosaic_controls)
@@ -193,7 +197,6 @@ def build_ui(w, Canvas):
     w.more_menu.addAction("全体表示", w.canvas.fit_image)
     w.more_menu.addAction("等倍表示", w.canvas.actual_size)
     w.more_menu.addSeparator()
-    w.lasso_action = w.more_menu.addAction("手描きで囲む", w.start_lasso)
     w.redraw_action = w.more_menu.addAction("輪郭を描き直す", lambda: w.start_lasso(replace=True))
     w.refine_action = w.more_menu.addAction("輪郭を再推定", lambda: w.refine_selected())
     w.exclude_action = w.more_menu.addAction("モザイクから外す部分を囲む", w.start_exclude)
