@@ -241,8 +241,13 @@ class GuiTests(unittest.TestCase):
         w.detection_dialog.accept()
         w.outline.trigger()
         self.assertFalse(w.canvas.outlines)
+        self.assertFalse(w.outline_btn.isChecked())
         w.draw_btn.click()
         self.assertTrue(w.canvas.outlines)
+        self.assertTrue(w.outline_btn.isChecked())
+        w.outline_btn.click()
+        self.assertFalse(w.canvas.outlines)
+        self.assertFalse(w.outline.isChecked())
 
     def test_detection_options_work_before_loading_and_defaults_survive_restart(self):
         fresh = MainWindow(self.preferences_path)

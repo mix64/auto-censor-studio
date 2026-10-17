@@ -132,6 +132,7 @@ class MainWindow(BatchMixin, QMainWindow):
             self.original,
             self.project_save_btn,
             self.outline,
+            self.outline_btn,
         ):
             widget.setEnabled(editing)
         options_enabled = not self.edit_locked() and not self.batch_running
