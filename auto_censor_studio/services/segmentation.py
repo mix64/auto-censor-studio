@@ -65,6 +65,10 @@ class Segmenter:
         # Reject empty/uncertain masks rather than silently removing coverage.
         if not np.isfinite(scores).all() or float(scores.flat[0]) < 0.60 or np.count_nonzero(mask) < 9:
             return result
+        spacing = max(2.0, max(region.w, region.h) * scale * 0.03)
+        # Bridging gaps only adds coverage, and turns a cluster of specks into one island.
+        size = math.ceil(spacing) | 1
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (size, size)))
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         rings = []
         for contour in contours:
@@ -72,17 +76,35 @@ class Segmenter:
                 continue
             # Keep all meaningful islands; fill interior holes so fine details cannot leak.
             epsilon = 1.5
-            simplified = cv2.approxPolyDP(contour, epsilon, True)
-            while len(simplified) > 96:
+            while True:
+                simplified = merge_close_points(cv2.approxPolyDP(contour, epsilon, True)[:, 0], spacing)
+                if len(simplified) <= 96:
+                    break
                 epsilon *= 1.5
-                simplified = cv2.approxPolyDP(contour, epsilon, True)
             if len(simplified) >= 3:
                 rings.append(
                     [
                         (float(x) * crop.width / width + x0, float(y) * crop.height / height + y0)
-                        for x, y in simplified[:, 0]
+                        for x, y in simplified
                     ]
                 )
         if rings and len(rings) <= 64:
             result.set_points(rings)
         return result
+
+
+def merge_close_points(ring, spacing):
+    """Collapse runs of consecutive vertices closer than spacing into their centroids until none remain."""
+    ring = np.asarray(ring, np.float64)
+    while True:
+        groups = [[ring[0]]]
+        for point in ring[1:]:
+            if math.dist(point, groups[-1][0]) < spacing:
+                groups[-1].append(point)
+            else:
+                groups.append([point])
+        if len(groups) > 1 and math.dist(groups[-1][0], groups[0][0]) < spacing:
+            groups[0] = groups.pop() + groups[0]
+        if len(groups) < 3 or len(groups) == len(ring):
+            return ring
+        ring = np.array([np.mean(group, axis=0) for group in groups])

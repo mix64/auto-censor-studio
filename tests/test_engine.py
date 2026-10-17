@@ -22,6 +22,7 @@ from auto_censor_studio.core import (
 
 
 from auto_censor_studio.services.detection import decode
+from auto_censor_studio.services.segmentation import Segmenter
 
 
 class EngineTests(unittest.TestCase):
@@ -154,6 +155,36 @@ class EngineTests(unittest.TestCase):
         self.assertFalse(expanded[65 - origin[1], 65 - origin[0]])
         self.assertFalse(region_covers(region, Region(60, 50, 15, 15)))
         self.assertTrue(region_covers(region, region))
+
+    def test_noisy_segmentation_merges_dense_vertices_without_losing_coverage(self):
+        rng = np.random.default_rng(7)
+        y, x = np.mgrid[:1024, :1024]
+        angle = np.arctan2(y - 340, x - 340)
+        jagged = 230 + 6 * np.sin(angle * 90) + rng.uniform(-4, 4, (1024, 1024))
+        decoded = np.hypot(x - 340, y - 340) < jagged
+        for cx, cy in rng.integers(600, 660, (40, 2)):
+            decoded[cy : cy + 3, cx : cx + 3] = True
+
+        class Decoder:
+            def run(self, _, feeds):
+                self.size = tuple(int(v) for v in feeds["orig_im_size"])
+                return np.where(decoded, 1.0, -1.0)[None, None], np.ones((1, 1)), None
+
+        segmenter = Segmenter()
+        segmenter.encoder = type("Encoder", (), {"run": lambda self, *_: [np.zeros(1)]})()
+        segmenter.decoder = Decoder()
+        result = segmenter.refine(Image.new("RGB", (600, 600)), Region(0, 0, 400, 400))
+        self.assertEqual(segmenter.decoder.size, (1024, 1024))
+        rings = result.points()
+        self.assertLessEqual(len(rings), 3)
+        outline = max(rings, key=len)
+        gaps = [np.hypot(*np.subtract(a, b)) for a, b in zip(outline, outline[1:] + outline[:1])]
+        self.assertGreaterEqual(min(gaps), 400 * 0.03 - 0.1)
+        mask, (ox, oy) = region_mask(result, (600, 600))
+        covered = np.zeros((600, 600), bool)
+        covered[oy : oy + mask.shape[0], ox : ox + mask.shape[1]] = mask > 0
+        source = np.asarray(Image.fromarray(decoded).resize((600, 600), Image.Resampling.NEAREST))
+        self.assertGreaterEqual(np.count_nonzero(covered & source) / np.count_nonzero(source), 0.97)
 
     def test_contours_survive_project_save_and_invalid_vertices_are_rejected(self):
         with tempfile.TemporaryDirectory() as folder:
