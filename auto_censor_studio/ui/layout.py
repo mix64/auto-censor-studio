@@ -46,7 +46,7 @@ def build_ui(w, Canvas):
         bar.addWidget(b)
         return b
 
-    w.open_btn = button("開く", w.open_dialog, "PNGを追加（複数選択可）", "folder")
+    w.clear_images_btn = button("", w.clear_images, "全部閉じる：読み込んだ画像をすべて閉じる", "close")
     bar.addSpacing(8)
     w.detect_btn = button("", w.detect, "自動検出：男性器・女性器の候補を検出", "auto", "primary")
     w.draw_btn = mode_button("draw", "範囲追加：対象を大まかに囲むと輪郭を自動抽出", "add")
@@ -84,6 +84,7 @@ def build_ui(w, Canvas):
     bar.addWidget(w.mosaic_controls)
     bar.addStretch()
     w.save_btn = button("保存", w.export, "処理済み画像を保存")
+    w.overwrite_btn = button("上書き保存", w.overwrite_current, "表示中の元画像に上書き保存")
     w.more_btn = MButton("", "more", "ghost", height=44, tip="その他の操作")
     w.more_btn.setAccessibleName("その他の操作")
     bar.addWidget(w.more_btn)

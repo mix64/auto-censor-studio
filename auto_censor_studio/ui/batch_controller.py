@@ -88,6 +88,7 @@ class BatchMixin:
         )
         self.remove_image_action.setEnabled(can_switch and not self.batch_running and bool(self.documents))
         self.clear_images_action.setEnabled(can_switch and not self.batch_running and bool(self.documents))
+        self.clear_images_btn.setEnabled(self.clear_images_action.isEnabled())
 
     def open_paths(self, paths):
         if self.busy or self.export_running:
@@ -450,7 +451,7 @@ class BatchMixin:
         self.canvas.size_ = (0, 0)
         self.canvas.selected = ""
         self.canvas.draw_regions()
-        self.canvas.placeholder.setText("PNGをドロップ、または「開く」で選択")
+        self.canvas.placeholder.setText("PNGをドロップ、またはCtrl+Oで選択")
         self.canvas.placeholder.show()
         self.setWindowTitle(APP_NAME)
         self.status.setText("")

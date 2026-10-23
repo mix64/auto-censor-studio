@@ -86,7 +86,7 @@ class MainWindow(BatchMixin, QMainWindow):
         super().resizeEvent(event)
         if not hasattr(self, "mosaic_controls"):
             return
-        compact = self.width() < 840
+        compact = self.width() < 1020
         if compact != self.compact_toolbar:
             self.compact_toolbar = compact
             if compact:
@@ -139,12 +139,12 @@ class MainWindow(BatchMixin, QMainWindow):
         for widget in (self.detection_options_action, self.threshold, self.tiled):
             widget.setEnabled(options_enabled)
         self.canvas.setEnabled(not self.edit_locked())
-        self.open_btn.setEnabled(not self.busy and not self.export_running)
         self.project_open_btn.setEnabled(not self.busy and not self.batch_running and not self.export_running)
         self.project_save_btn.setEnabled(
             bool(self.documents) and not self.busy and not self.batch_running and not self.export_running
         )
         self.overwrite_action.setEnabled(editing and not self.batch_running and bool(self.regions))
+        self.overwrite_btn.setEnabled(self.overwrite_action.isEnabled())
         self.detect_btn.setEnabled(editing and not self.batch_running)
         self.draw_btn.setEnabled(editing and not self.batch_running)
         self.lasso_btn.setEnabled(editing and not self.batch_running)

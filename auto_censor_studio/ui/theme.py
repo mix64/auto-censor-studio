@@ -45,7 +45,7 @@ COLORS = THEMES[False]
 
 class EmptyState(QLabel):
     def __init__(self, parent=None):
-        super().__init__("PNGをドロップ、または「開く」で選択", parent)
+        super().__init__("PNGをドロップ、またはCtrl+Oで選択", parent)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setObjectName("placeholder")
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
